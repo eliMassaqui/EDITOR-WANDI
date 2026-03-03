@@ -3,13 +3,59 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Visualizador MicroServo - Plano Cartesiano</title>
+    <title>Visualizador 3D - Acima do Plano</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; }
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
         canvas { display: block; }
+        
+        #drop-zone {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 12px 24px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #00ffcc;
+            border: 1px solid #00ffcc;
+            border-radius: 4px;
+            pointer-events: none;
+            font-weight: bold;
+            font-size: 13px;
+            z-index: 10;
+        }
+
+        /* --- Estilo do Footer Suspenso --- */
+        #footer-card {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: white;
+            border: 2px solid #007bff; /* Borda Azul */
+            padding: 10px 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+            text-align: center;
+            min-width: 200px;
+            z-index: 10;
+        }
+
+        #footer-card h1 {
+            margin: 0;
+            font-size: 16px;
+            color: #007bff; /* Título Azul */
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
     </style>
 </head>
 <body>
+
+    <div id="drop-zone">SOLTE O ARQUIVO .GLB AQUI</div>
+
+    <div id="footer-card">
+        <h1>Visualizador Wandi</h1>
+    </div>
 
     <script type="importmap">
         {
@@ -27,44 +73,65 @@
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         import GUI from 'lil-gui';
 
-        // --- 1. Configurações Iniciais ---
+        // --- 1. Ambiente ---
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0xd1d1d1); // Fundo cinza original
+        scene.background = new THREE.Color(0xd1d1d1);
 
-        const camera = new THREE.PerspectiveCamera(53, window.innerWidth / window.innerHeight, 0.1, 2000);
-        camera.position.set(130.1, 109.39, -55.82);
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 5000);
+        camera.position.set(150, 150, 150);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         document.body.appendChild(renderer.domElement);
 
-        // Iluminação
-        scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-        const dirLight = new THREE.DirectionalLight(0xffffff, 1.4);
-        dirLight.position.set(50, 100, 75);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight.position.set(100, 200, 100);
         scene.add(dirLight);
 
-        // Plano Cartesiano (Grid e Eixos)
+        // Chão (Plano Cartesiano)
         scene.add(new THREE.GridHelper(200, 20), new THREE.AxesHelper(100));
 
-        const gui = new GUI({ title: '🕹️ Controle MicroServo' });
+        const gui = new GUI({ title: '🕹️ Controle de Peças' });
+        let partsFolder = gui.addFolder('🔧 Peças Detectadas');
         const guiFoldersMap = new Map();
+        
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
         let selectedPart = null;
+        let currentModel = null;
 
-        // --- 2. Carregamento e Lógica de Pivôs ---
         const loader = new GLTFLoader();
-        loader.load('MicroServo.glb', (gltf) => {
+
+        // --- 2. Lógica de Posicionamento "Sobre o Plano" ---
+        function setupModel(gltf) {
+            if (currentModel) {
+                scene.remove(currentModel);
+                guiFoldersMap.clear();
+                partsFolder.destroy();
+                partsFolder = gui.addFolder('🔧 Peças Detectadas');
+            }
+
             const model = gltf.scene;
-            
-            // Posicionamento e Escala Originais
-            model.position.set(-65.6, -21.2, 23.2);
-            model.scale.setScalar(1.7226);
+            currentModel = model;
+
+            const box = new THREE.Box3().setFromObject(model);
+            const size = new THREE.Vector3();
+            box.getSize(size);
+            const center = new THREE.Vector3();
+            box.getCenter(center);
+
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const scaleFactor = 120 / maxDim;
+            model.scale.setScalar(scaleFactor);
+
+            model.position.x = -center.x * scaleFactor;
+            model.position.z = -center.z * scaleFactor;
+            model.position.y = -box.min.y * scaleFactor; 
+
             scene.add(model);
 
-            const partsFolder = gui.addFolder('🔧 Peças Individuais');
             const meshes = [];
             model.traverse(n => { if (n.isMesh) meshes.push(n); });
 
@@ -72,17 +139,16 @@
                 mesh.material = mesh.material.clone();
                 mesh.userData.originalEmissive = mesh.material.emissive.getHex();
 
-                // Lógica de Pivô Centralizado (Mantida)
-                const box = new THREE.Box3().setFromObject(mesh);
-                const center = box.getCenter(new THREE.Vector3());
+                const subBox = new THREE.Box3().setFromObject(mesh);
+                const subCenter = subBox.getCenter(new THREE.Vector3());
+                
                 const pivot = new THREE.Group();
-                pivot.position.copy(center);
+                pivot.position.copy(subCenter);
                 
                 mesh.parent.add(pivot);
-                mesh.position.sub(center);
+                mesh.position.sub(subCenter);
                 pivot.add(mesh);
 
-                // Interface GUI
                 const pFolder = partsFolder.addFolder(mesh.name || "Peça");
                 pFolder.add(pivot.rotation, 'x', -Math.PI, Math.PI).name('Girar X');
                 pFolder.add(pivot.rotation, 'y', -Math.PI, Math.PI).name('Girar Y');
@@ -91,15 +157,26 @@
 
                 guiFoldersMap.set(mesh.uuid, pFolder);
             });
+        }
+
+        // --- 3. Handlers de Eventos ---
+        window.addEventListener('dragover', (e) => e.preventDefault());
+        window.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const file = e.dataTransfer.files[0];
+            if (file && (file.name.endsWith('.glb') || file.name.endsWith('.gltf'))) {
+                const reader = new FileReader();
+                reader.readAsArrayBuffer(file);
+                reader.onload = (ev) => {
+                    loader.parse(ev.target.result, '', (gltf) => setupModel(gltf));
+                };
+            }
         });
 
-        // --- 3. Seleção e Brilho Aceso ---
-        function onPointerDown(event) {
+        window.addEventListener('pointerdown', (event) => {
             if (event.target.closest('.lil-gui')) return;
-
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
             raycaster.setFromCamera(mouse, camera);
             const intersects = raycaster.intersectObjects(scene.children, true);
 
@@ -110,9 +187,7 @@
 
             if (intersects.length > 0 && intersects[0].object.isMesh) {
                 selectedPart = intersects[0].object;
-                selectedPart.material.emissive.setHex(0xbc13fe); // Roxo Neon
-                selectedPart.material.emissiveIntensity = 1;
-
+                selectedPart.material.emissive.setHex(0x007bff);
                 const targetFolder = guiFoldersMap.get(selectedPart.uuid);
                 if (targetFolder) {
                     guiFoldersMap.forEach(f => f.close());
@@ -121,19 +196,16 @@
             } else {
                 selectedPart = null;
             }
-        }
+        });
 
-        window.addEventListener('pointerdown', onPointerDown);
-
-        // --- 4. Loop de Animação ---
+        // --- 4. Loop ---
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
 
         function animate() {
             requestAnimationFrame(animate);
             if (selectedPart) {
-                const pulse = 0.6 + Math.sin(Date.now() * 0.006) * 0.4;
-                selectedPart.material.emissiveIntensity = pulse;
+                selectedPart.material.emissiveIntensity = 0.6 + Math.sin(Date.now() * 0.006) * 0.4;
             }
             controls.update();
             renderer.render(scene, camera);
