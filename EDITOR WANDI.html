@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualizador MicroServo - Plano Cartesiano</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import GUI from 'lil-gui';
+
+        // --- 1. Configurações Iniciais ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xd1d1d1); // Fundo cinza original
+
+        const camera = new THREE.PerspectiveCamera(53, window.innerWidth / window.innerHeight, 0.1, 2000);
+        camera.position.set(130.1, 109.39, -55.82);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        // Iluminação
+        scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.4);
+        dirLight.position.set(50, 100, 75);
+        scene.add(dirLight);
+
+        // Plano Cartesiano (Grid e Eixos)
+        scene.add(new THREE.GridHelper(200, 20), new THREE.AxesHelper(100));
+
+        const gui = new GUI({ title: '🕹️ Controle MicroServo' });
+        const guiFoldersMap = new Map();
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        let selectedPart = null;
+
+        // --- 2. Carregamento e Lógica de Pivôs ---
+        const loader = new GLTFLoader();
+        loader.load('MicroServo.glb', (gltf) => {
+            const model = gltf.scene;
+            
+            // Posicionamento e Escala Originais
+            model.position.set(-65.6, -21.2, 23.2);
+            model.scale.setScalar(1.7226);
+            scene.add(model);
+
+            const partsFolder = gui.addFolder('🔧 Peças Individuais');
+            const meshes = [];
+            model.traverse(n => { if (n.isMesh) meshes.push(n); });
+
+            meshes.forEach(mesh => {
+                mesh.material = mesh.material.clone();
+                mesh.userData.originalEmissive = mesh.material.emissive.getHex();
+
+                // Lógica de Pivô Centralizado (Mantida)
+                const box = new THREE.Box3().setFromObject(mesh);
+                const center = box.getCenter(new THREE.Vector3());
+                const pivot = new THREE.Group();
+                pivot.position.copy(center);
+                
+                mesh.parent.add(pivot);
+                mesh.position.sub(center);
+                pivot.add(mesh);
+
+                // Interface GUI
+                const pFolder = partsFolder.addFolder(mesh.name || "Peça");
+                pFolder.add(pivot.rotation, 'x', -Math.PI, Math.PI).name('Girar X');
+                pFolder.add(pivot.rotation, 'y', -Math.PI, Math.PI).name('Girar Y');
+                pFolder.add(pivot.rotation, 'z', -Math.PI, Math.PI).name('Girar Z');
+                pFolder.close();
+
+                guiFoldersMap.set(mesh.uuid, pFolder);
+            });
+        });
+
+        // --- 3. Seleção e Brilho Aceso ---
+        function onPointerDown(event) {
+            if (event.target.closest('.lil-gui')) return;
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(scene.children, true);
+
+            if (selectedPart) {
+                selectedPart.material.emissive.setHex(selectedPart.userData.originalEmissive);
+                selectedPart.material.emissiveIntensity = 0;
+            }
+
+            if (intersects.length > 0 && intersects[0].object.isMesh) {
+                selectedPart = intersects[0].object;
+                selectedPart.material.emissive.setHex(0xbc13fe); // Roxo Neon
+                selectedPart.material.emissiveIntensity = 1;
+
+                const targetFolder = guiFoldersMap.get(selectedPart.uuid);
+                if (targetFolder) {
+                    guiFoldersMap.forEach(f => f.close());
+                    targetFolder.open();
+                }
+            } else {
+                selectedPart = null;
+            }
+        }
+
+        window.addEventListener('pointerdown', onPointerDown);
+
+        // --- 4. Loop de Animação ---
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (selectedPart) {
+                const pulse = 0.6 + Math.sin(Date.now() * 0.006) * 0.4;
+                selectedPart.material.emissiveIntensity = pulse;
+            }
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>

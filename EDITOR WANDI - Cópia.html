@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualizador MicroServo - Rotação Centralizada</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import GUI from 'lil-gui';
+
+        // 1. Configurações Iniciais
+        const CAMERA_INICIAL = { x: 130.1, y: 109.39, z: -55.82, fov: 53 };
+        
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xd1d1d1);
+
+        const camera = new THREE.PerspectiveCamera(CAMERA_INICIAL.fov, window.innerWidth / window.innerHeight, 0.1, 2000);
+        camera.position.set(CAMERA_INICIAL.x, CAMERA_INICIAL.y, CAMERA_INICIAL.z);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.body.appendChild(renderer.domElement);
+
+        // 2. Iluminação
+        scene.add(new THREE.AmbientLight(0xffffff, 0.82));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.43);
+        dirLight.position.set(50, 100, 75);
+        scene.add(dirLight);
+
+        scene.add(new THREE.GridHelper(200, 20), new THREE.AxesHelper(100));
+
+        const gui = new GUI({ title: '🕹️ Controle do MicroServo' });
+        const settings = {
+            resetCamera: () => {
+                camera.position.set(CAMERA_INICIAL.x, CAMERA_INICIAL.y, CAMERA_INICIAL.z);
+                controls.target.set(0, 0, 0);
+                camera.updateProjectionMatrix();
+            }
+        };
+
+        // 3. Carregamento e Lógica de Pivôs
+        const loader = new GLTFLoader();
+        loader.load('MicroServo.glb', (gltf) => {
+            const model = gltf.scene;
+            
+            // Posicionamento Global conforme solicitado
+            model.position.set(-65.6, -21.2, 23.2);
+            model.scale.setScalar(1.7226);
+            scene.add(model);
+
+            // --- Pasta Global ---
+            const globalFolder = gui.addFolder('Modelo (Global)');
+            globalFolder.add(model.position, 'x', -300, 300).name('Posição X');
+            globalFolder.add(model.position, 'y', -300, 300).name('Posição Y');
+            globalFolder.add(model.position, 'z', -300, 300).name('Posição Z');
+            globalFolder.add(model.scale, 'x', 0.1, 5).name('Escala Global').onChange(v => model.scale.setScalar(v));
+
+            // --- Lógica de Peças Individuais (Pivô Centralizado) ---
+            const partsFolder = gui.addFolder('🔧 Peças Individuais');
+            const meshes = [];
+
+            // Primeiro coletamos as meshes para não interferir no traverse
+            model.traverse((node) => {
+                if (node.isMesh) meshes.push(node);
+            });
+
+            meshes.forEach((child) => {
+                // 1. Calcular o centro real desta peça específica
+                const box = new THREE.Box3().setFromObject(child);
+                const center = new THREE.Vector3();
+                box.getCenter(center);
+
+                // 2. Criar um Grupo (o novo Eixo) e posicionar no centro da peça
+                const pivot = new THREE.Group();
+                pivot.name = "Pivot_" + child.name;
+                pivot.position.copy(center);
+                
+                // 3. Adicionar o pivô na cena (no mesmo pai da peça)
+                child.parent.add(pivot);
+
+                // 4. Mover a peça para dentro do pivô e compensar a distância
+                // Agora o (0,0,0) do pivô é o centro da peça
+                child.position.sub(center);
+                pivot.add(child);
+
+                // --- Controles na GUI ---
+                const pFolder = partsFolder.addFolder(child.name || "Peça");
+                
+                // Rotação (Agora aplicada ao PIVOT para girar no eixo central)
+                pFolder.add(pivot.rotation, 'x', -Math.PI, Math.PI).name('Girar X');
+                pFolder.add(pivot.rotation, 'y', -Math.PI, Math.PI).name('Girar Y');
+                pFolder.add(pivot.rotation, 'z', -Math.PI, Math.PI).name('Girar Z');
+                
+                // Opções extras
+                pFolder.add(child, 'visible').name('Visível');
+                pFolder.add(pivot.position, 'y', center.y - 50, center.y + 50).name('Ajustar Altura');
+
+                pFolder.close();
+            });
+
+            // --- Pastas de Câmera e Ambiente ---
+            const camFolder = gui.addFolder('Câmera');
+            camFolder.add(camera.position, 'x').listen();
+            camFolder.add(camera, 'fov', 10, 120).onChange(() => camera.updateProjectionMatrix());
+            camFolder.add(settings, 'resetCamera').name('Resetar Visão');
+
+            const envFolder = gui.addFolder('Ambiente');
+            const colorParams = { bg: '#d1d1d1' };
+            envFolder.addColor(colorParams, 'bg').name('Fundo').onChange(v => scene.background.set(v));
+
+            gui.open();
+        });
+
+        // 4. Loop de Animação e Resize
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
+</body>
+</html>
